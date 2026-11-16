@@ -4,6 +4,9 @@ from .rule_agent import RuleAgent
 from .logic_agent import LogicAgent
 from .greedy_agent import GreedyAgent
 from .astar_agent import AStarAgent
+from .search_agents import UCSAgent
+
+
 
 REGISTRY = {
     "random": RandomAgent,
@@ -11,4 +14,5 @@ REGISTRY = {
     "logic": LogicAgent,
     "greedy": GreedyAgent,
     "astar": AStarAgent,
+    "ucs": UCSAgent,
 }
