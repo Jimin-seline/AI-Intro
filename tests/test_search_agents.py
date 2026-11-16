@@ -4,7 +4,7 @@ import pytest
 
 from agents import REGISTRY
 from agents.astar_agent import AStarAgent
-from agents.search_agents import UCSAgent, BFSAgent, DFSAgent
+from agents.search_agents import UCSAgent, BFSAgent, DFSAgent, IDSAgent, IDAStarAgent
 from env import ComputeTimeout
 from tests.helpers import make_env
 from tests.test_astar_agent import exact_remaining_costs
@@ -43,8 +43,12 @@ def test_registered_and_invalid_settings():
     assert REGISTRY["ucs"] is UCSAgent
     assert REGISTRY["bfs"] is BFSAgent
     assert REGISTRY["dfs"] is DFSAgent
+    assert REGISTRY["ids"] is IDSAgent
+    assert REGISTRY["idastar"] is IDAStarAgent
     with pytest.raises(ValueError):
         UCSAgent(objective="c3")
+    with pytest.raises(ValueError):
+        IDAStarAgent(heuristic="nope")
 
 
 @pytest.mark.parametrize("objective", ["c1", "c2"])
@@ -142,6 +146,58 @@ def test_dfs_is_deterministic_and_reports_metrics():
     first = play(env, agent)
     assert play(env, agent) == first
     assert agent.metrics["mem_states"] > 0
+    assert agent.metrics["plan_len"] == len(env.actions)
+    agent.reset(env, random.Random(0))
+    env.set_deadline(0)
+    with pytest.raises(ComputeTimeout):
+        agent.choose_action(env.reset())
+
+
+SMALL = [("김치", "회사"), ("피자", "학교")]       # IDA*(memo=false)도 금방 끝나는 작은 판
+TINY = [("김치", "회사")]                         # IDS(memo=false)도 금방 끝나는 판
+
+
+@pytest.mark.parametrize("memo", [False, True])
+@pytest.mark.parametrize("preset", ["L0", "L1"])
+def test_ids_finds_fewest_actions(preset, memo):
+    """IDS는 BFS처럼 행동 수 최소 해를 찾는다."""
+    orders = TINY if not memo else SMALL
+    env = make_env(orders, START, preset=preset)
+    optimum = fewest_actions(env)
+    play(env, IDSAgent(memo=memo))
+    assert len(env.actions) == optimum
+
+
+@pytest.mark.parametrize("memo", [False, True])
+@pytest.mark.parametrize("objective", ["c1", "c2"])
+def test_idastar_matches_exact_oracle(objective, memo):
+    """허용 휴리스틱을 쓰는 IDA*는 최적 비용을 낸다."""
+    orders = SMALL if not memo else ORDERS
+    env = make_env(orders, START, preset="L1")
+    optimum = exact_remaining_costs(env, objective)[env.state]
+    c1, c2 = play(env, IDAStarAgent(memo=memo, objective=objective))
+    assert {"c1": c1, "c2": c2}[objective] == optimum
+
+
+def test_memo_trades_memory_for_nodes():
+    """전치표를 켜면 노드수는 줄고 메모리는 는다. 끄면 메모리는 경로 길이 수준이다."""
+    stats = {}
+    for memo in (False, True):
+        env = make_env(TINY, START, preset="L1")
+        agent = IDSAgent(memo=memo)
+        play(env, agent)
+        stats[memo] = (env.node_counts()[0], agent.metrics["mem_states"])
+    assert stats[True][0] < stats[False][0]
+    assert stats[True][1] > stats[False][1]
+    assert stats[False][1] <= len(env.actions) + 1
+
+
+@pytest.mark.parametrize("cls", [IDSAgent, IDAStarAgent])
+def test_iterative_reports_and_deadline(cls):
+    env = make_env(SMALL, START, preset="L1")
+    agent = cls(memo=True)
+    play(env, agent)
+    assert agent.metrics["depth"] > 0
     assert agent.metrics["plan_len"] == len(env.actions)
     agent.reset(env, random.Random(0))
     env.set_deadline(0)
