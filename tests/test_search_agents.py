@@ -4,7 +4,7 @@ import pytest
 
 from agents import REGISTRY
 from agents.astar_agent import AStarAgent
-from agents.search_agents import UCSAgent
+from agents.search_agents import UCSAgent, BFSAgent
 from env import ComputeTimeout
 from tests.helpers import make_env
 from tests.test_astar_agent import exact_remaining_costs
@@ -24,8 +24,24 @@ def play(env, agent):
     return env.total_c1, env.total_c2
 
 
+def fewest_actions(env):
+    """독립 오라클: 규칙만 써서 목표까지의 최소 행동 수를 센다."""
+    from collections import deque
+    queue, depth = deque([env.state]), {env.state: 0}
+    while queue:
+        state = queue.popleft()
+        if env.rules.is_goal(state):
+            return depth[state]
+        for action in env.rules.legal_actions(state):
+            nxt, _, _ = env.rules.step(state, action, lambda tick: None)
+            if nxt not in depth:
+                depth[nxt] = depth[state] + 1
+                queue.append(nxt)
+
+
 def test_registered_and_invalid_settings():
     assert REGISTRY["ucs"] is UCSAgent
+    assert REGISTRY["bfs"] is BFSAgent
     with pytest.raises(ValueError):
         UCSAgent(objective="c3")
 
@@ -71,6 +87,36 @@ def test_reset_clears_previous_plan():
 def test_deadline_is_respected():
     env = make_env(ORDERS, START, preset="L1")
     agent = UCSAgent()
+    agent.reset(env, random.Random(0))
+    env.set_deadline(0)
+    with pytest.raises(ComputeTimeout):
+        agent.choose_action(env.reset())
+
+
+@pytest.mark.parametrize("preset", ["L0", "L1"])
+def test_bfs_finds_fewest_actions(preset):
+    env = make_env(ORDERS, START, preset=preset)
+    optimum = fewest_actions(env)
+    play(env, BFSAgent())
+    assert len(env.actions) == optimum
+
+
+@pytest.mark.parametrize("preset", ["L0", "L1"])
+def test_bfs_cost_is_never_below_ucs(preset):
+    """BFS는 비용을 보지 않으므로 총비용이 UCS(최적)보다 작을 수 없다."""
+    costs = {}
+    for agent in (UCSAgent(), BFSAgent()):
+        env = make_env(ORDERS, START, preset=preset)
+        costs[agent.name] = play(env, agent)[0]
+    assert costs["bfs"] >= costs["ucs"]
+
+
+def test_bfs_reports_memory_and_respects_deadline():
+    env = make_env(ORDERS, START, preset="L1")
+    agent = BFSAgent()
+    play(env, agent)
+    assert agent.metrics["mem_states"] > 0
+    assert agent.metrics["plan_len"] == len(env.actions)
     agent.reset(env, random.Random(0))
     env.set_deadline(0)
     with pytest.raises(ComputeTimeout):
