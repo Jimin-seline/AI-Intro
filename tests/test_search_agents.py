@@ -4,7 +4,7 @@ import pytest
 
 from agents import REGISTRY
 from agents.astar_agent import AStarAgent
-from agents.search_agents import UCSAgent, BFSAgent
+from agents.search_agents import UCSAgent, BFSAgent, DFSAgent
 from env import ComputeTimeout
 from tests.helpers import make_env
 from tests.test_astar_agent import exact_remaining_costs
@@ -42,6 +42,7 @@ def fewest_actions(env):
 def test_registered_and_invalid_settings():
     assert REGISTRY["ucs"] is UCSAgent
     assert REGISTRY["bfs"] is BFSAgent
+    assert REGISTRY["dfs"] is DFSAgent
     with pytest.raises(ValueError):
         UCSAgent(objective="c3")
 
@@ -115,6 +116,31 @@ def test_bfs_reports_memory_and_respects_deadline():
     env = make_env(ORDERS, START, preset="L1")
     agent = BFSAgent()
     play(env, agent)
+    assert agent.metrics["mem_states"] > 0
+    assert agent.metrics["plan_len"] == len(env.actions)
+    agent.reset(env, random.Random(0))
+    env.set_deadline(0)
+    with pytest.raises(ComputeTimeout):
+        agent.choose_action(env.reset())
+
+
+@pytest.mark.parametrize("preset", ["L0", "L1"])
+def test_dfs_completes_but_is_not_better_than_optimal(preset):
+    """DFS는 해를 찾지만 행동 수는 BFS 이상, 총비용은 UCS 이상이다."""
+    results = {}
+    for agent in (UCSAgent(), BFSAgent(), DFSAgent()):
+        env = make_env(ORDERS, START, preset=preset)
+        c1, _ = play(env, agent)
+        results[agent.name] = (c1, len(env.actions))
+    assert results["dfs"][0] >= results["ucs"][0]
+    assert results["dfs"][1] >= results["bfs"][1]
+
+
+def test_dfs_is_deterministic_and_reports_metrics():
+    env = make_env(ORDERS, START, preset="L1")
+    agent = DFSAgent()
+    first = play(env, agent)
+    assert play(env, agent) == first
     assert agent.metrics["mem_states"] > 0
     assert agent.metrics["plan_len"] == len(env.actions)
     agent.reset(env, random.Random(0))
